@@ -1,5 +1,8 @@
+from numpy import ndarray
+
 from vnpy_ctastrategy import (
     CtaTemplate,
+    CtaEngine,
     StopOrder,
     TickData,
     BarData,
@@ -10,116 +13,115 @@ from vnpy_ctastrategy import (
 )
 
 
-class SmoothDoubleMaStrategy(CtaTemplate):
-    author = "用Python的交易员"
+class RumiStrategy(CtaTemplate):
+    """RUMI策略"""
 
-    fast_window = 3
-    slow_window = 50
-    diff_window = 30
+    author = "VeighNa Elite"
 
-    fast_ma0 = 0.0
-    fast_ma1 = 0.0
+    fast_window = 3         # 快速均线窗口
+    slow_window = 50        # 慢速均线窗口
+    diff_window = 30        # 均线偏差窗口
+    price_add = 5           # 委托超价
+    fixed_size = 1          # 委托数量
 
-    slow_ma0 = 0.0
-    slow_ma1 = 0.0
+    ma_diff = 0.0           # 均线偏差值
 
-    diff_ma = 0.0
+    parameters = [
+        "fast_window",
+        "slow_window",
+        "diff_window",
+        "price_add",
+        "fixed_size"
+    ]
+    variables = ["ma_diff"]
 
-    parameters = ["fast_window", "slow_window", "diff_window"]
-    variables = ["fast_ma0", "fast_ma1", "slow_ma0", "slow_ma1", "diff_ma"]
-
-    def __init__(self, cta_engine, strategy_name, vt_symbol, setting):
-        """"""
+    def __init__(
+        self,
+        cta_engine: CtaEngine,
+        strategy_name: str,
+        vt_symbol: str,
+        setting: dict
+    ):
+        """构造函数"""
         super().__init__(cta_engine, strategy_name, vt_symbol, setting)
 
         self.bg = BarGenerator(self.on_bar)
         self.am = ArrayManager()
 
-    def on_init(self):
-        """
-        Callback when strategy is inited.
-        """
+    def on_init(self) -> None:
+        """初始化"""
         self.write_log("策略初始化")
         self.load_bar(10)
 
-    def on_start(self):
-        """
-        Callback when strategy is started.
-        """
+    def on_start(self) -> None:
+        """启动"""
         self.write_log("策略启动")
         self.put_event()
 
-    def on_stop(self):
-        """
-        Callback when strategy is stopped.
-        """
+    def on_stop(self) -> None:
+        """停止"""
         self.write_log("策略停止")
-
         self.put_event()
 
-    def on_tick(self, tick: TickData):
-        """
-        Callback of new tick data update.
-        """
+    def on_tick(self, tick: TickData) -> None:
+        """Tick推送"""
         self.bg.update_tick(tick)
 
-    def on_bar(self, bar: BarData):
-        """
-        Callback of new bar data update.
-        """
-
-        am = self.am
+    def on_bar(self, bar: BarData) -> None:
+        """K线推送"""
+        # 更新到ArrayManager
+        am: ArrayManager = self.am
         am.update_bar(bar)
         if not am.inited:
             return
 
-        fast_ma = am.sma(self.fast_window, array=True)
-        self.fast_ma0 = fast_ma[-1]
-        self.fast_ma1 = fast_ma[-2]
+        # 计算均线数组
+        fast_array: ndarray = am.sma(self.fast_window, array=True)
+        slow_array: ndarray = am.ema(self.slow_window, array=True)
 
-        slow_ma = am.ema(self.slow_window, array=True)
-        self.slow_ma0 = slow_ma[-1]
-        self.slow_ma1 = slow_ma[-2]
+        # 计算均线差值
+        diff_array: ndarray = fast_array - slow_array
+        diff_mean_0 = diff_array[-self.diff_window:].mean()
+        diff_mean_1 = diff_array[-self.diff_window-1:-1].mean()
 
-        diff = fast_ma - slow_ma
-        diff_mean_now = sum(diff[-self.diff_window:])/len(diff[-self.diff_window:])
-        diff_mean_past = sum(diff[-self.diff_window-1:-1])/len(diff[-self.diff_window-1:-1])
-        self.write_log(f"now is{diff_mean_now}")
-        self.write_log(f"past is{diff_mean_past}")
-        cross_over = diff_mean_now > 0 and diff_mean_past < 0#上穿0
-        cross_below = diff_mean_now < 0 and diff_mean_past > 0#下穿0
+        # 判断上下穿
+        cross_over = diff_mean_0 > 0 and diff_mean_1 <= 0
+        cross_below = diff_mean_0 < 0 and diff_mean_1 >= 0
 
-
+        # 执行交易信号
         if cross_over:
-            if self.pos == 0:
-                self.buy(bar.close_price, 1)
-            elif self.pos < 0:
-                self.cover(bar.close_price, 1)
-                self.buy(bar.close_price, 1)
+            # 计算委托限价（超价）
+            price: float = bar.close_price + self.price_add
 
+            # 无仓位，直接开仓
+            if not self.pos:
+                self.buy(price, self.fixed_size)
+            # 反向仓位，先平后开
+            elif self.pos < 0:
+                self.cover(price, abs(self.pos))
+                self.buy(price, self.fixed_size)
         elif cross_below:
-            if self.pos == 0:
-                self.short(bar.close_price, 1)
+            # 计算委托限价（超价）
+            price: float = bar.close_price - self.price_add
+
+            # 无仓位，直接开仓
+            if not self.pos:
+                self.short(price, self.fixed_size)
+            # 反向仓位，先平后开
             elif self.pos > 0:
-                self.sell(bar.close_price, 1)
-                self.short(bar.close_price, 1)
+                self.sell(price, abs(self.pos))
+                self.short(price, self.fixed_size)
 
         self.put_event()
 
-    def on_order(self, order: OrderData):
-        """
-        Callback of new order data update.
-        """
+    def on_order(self, order: OrderData) -> None:
+        """委托推送"""
         pass
 
-    def on_trade(self, trade: TradeData):
-        """
-        Callback of new trade data update.
-        """
+    def on_trade(self, trade: TradeData) -> None:
+        """成交推送"""
         self.put_event()
 
-    def on_stop_order(self, stop_order: StopOrder):
-        """
-        Callback of stop order update.
-        """
+    def on_stop_order(self, stop_order: StopOrder) -> None:
+        """停止单推送"""
         pass
