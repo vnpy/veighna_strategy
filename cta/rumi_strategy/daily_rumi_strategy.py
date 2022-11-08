@@ -1,3 +1,5 @@
+from numpy import ndarray
+
 from vnpy_ctastrategy import (
     CtaTemplate,
     StopOrder,
@@ -13,119 +15,116 @@ from datetime import datetime
 from typing import Callable
 
 
-class DailySmoothDoubleMaStrategy(CtaTemplate):
-    author = "用Python的交易员"
+class DailyRumiStrategy(CtaTemplate):
 
-    fast_window = 3
-    slow_window = 50
-    diff_window = 30
+    """Rumi策略"""
 
-    fast_ma0 = 0.0
-    fast_ma1 = 0.0
+    author = "VeighNa Elite"
 
-    slow_ma0 = 0.0
-    slow_ma1 = 0.0
+    fast_window = 3         # 快速均线窗口
+    slow_window = 50        # 慢速均线窗口
+    diff_window = 30        # 均线偏差窗口
+    price_add = 5           # 委托超价
+    fixed_size = 1          # 委托数量
 
-    diff_ma = 0.0
+    ma_diff = 0.0           # 均线偏差值
 
-    parameters = ["fast_window", "slow_window", "diff_window"]
-    variables = ["fast_ma0", "fast_ma1", "slow_ma0", "slow_ma1", "diff_ma"]
+    parameters = [
+        "fast_window",
+        "slow_window",
+        "diff_window",
+        "price_add",
+        "fixed_size"
+    ]
+    variables = ["ma_diff"]
 
     def __init__(self, cta_engine, strategy_name, vt_symbol, setting):
-        """"""
+        """构造函数"""
         super().__init__(cta_engine, strategy_name, vt_symbol, setting)
 
         self.bg = DailyBarGenerator(self.on_bar, 1, self.on_daily_bar)
         self.am = ArrayManager()
 
     def on_init(self):
-        """
-        Callback when strategy is inited.
-        """
+        """初始化"""
         self.write_log("策略初始化")
         self.load_bar(30)
 
     def on_start(self):
-        """
-        Callback when strategy is started.
-        """
+        """启动"""
         self.write_log("策略启动")
         self.put_event()
 
     def on_stop(self):
-        """
-        Callback when strategy is stopped.
-        """
+        """停止"""
         self.write_log("策略停止")
-
         self.put_event()
 
     def on_tick(self, tick: TickData):
-        """
-        Callback of new tick data update.
-        """
+        """Tick数据推送"""
         self.bg.update_tick(tick)
 
     def on_bar(self, bar: BarData):
+        """分钟K线推送"""
         self.bg.update_bar(bar)
 
     def on_daily_bar(self, bar: BarData):
-        """
-        Callback of new bar data update.
-        """
-
+        """日线推送"""
+        # 更新到ArrayManager
         am = self.am
         am.update_bar(bar)
         if not am.inited:
             return
 
-        fast_ma = am.sma(self.fast_window, array=True)
-        self.fast_ma0 = fast_ma[-1]
-        self.fast_ma1 = fast_ma[-2]
+        # 计算均线数组
+        fast_array: ndarray = am.sma(self.fast_window, array=True)
+        slow_array: ndarray = am.ema(self.slow_window, array=True)
 
-        slow_ma = am.ema(self.slow_window, array=True)
-        self.slow_ma0 = slow_ma[-1]
-        self.slow_ma1 = slow_ma[-2]
+        # 计算均线差值
+        diff_array: ndarray = fast_array - slow_array
+        diff_mean_0 = diff_array[-self.diff_window:].mean()
+        diff_mean_1 = diff_array[-self.diff_window-1:-1].mean()
 
-        diff = fast_ma - slow_ma
-        diff_mean_now = sum(diff[-self.diff_window:])/len(diff[-self.diff_window:])
-        diff_mean_past = sum(diff[-self.diff_window-1:-1])/len(diff[-self.diff_window-1:-1])
+        # 判断上下穿
+        cross_over = diff_mean_0 > 0 and diff_mean_1 <= 0
+        cross_below = diff_mean_0 < 0 and diff_mean_1 >= 0
 
-        cross_over = diff_mean_now > 0 and diff_mean_past < 0#上穿0
-        cross_below = diff_mean_now < 0 and diff_mean_past > 0#下穿0
-
+        # 执行交易信号
         if cross_over:
-            if self.pos == 0:
-                self.buy(bar.close_price, 1)
-            elif self.pos < 0:
-                self.cover(bar.close_price, 1)
-                self.buy(bar.close_price, 1)
+            # 计算委托限价（超价）
+            price: float = bar.close_price + self.price_add
 
+            # 无仓位，直接开仓
+            if not self.pos:
+                self.buy(price, self.fixed_size)
+            # 反向仓位，先平后开
+            elif self.pos < 0:
+                self.cover(price, abs(self.pos))
+                self.buy(price, self.fixed_size)
         elif cross_below:
-            if self.pos == 0:
-                self.short(bar.close_price, 1)
+            # 计算委托限价（超价）
+            price: float = bar.close_price - self.price_add
+
+            # 无仓位，直接开仓
+            if not self.pos:
+                self.short(price, self.fixed_size)
+            # 反向仓位，先平后开
             elif self.pos > 0:
-                self.sell(bar.close_price, 1)
-                self.short(bar.close_price, 1)
+                self.sell(price, abs(self.pos))
+                self.short(price, self.fixed_size)
 
         self.put_event()
 
     def on_order(self, order: OrderData):
-        """
-        Callback of new order data update.
-        """
+        """委托推送"""
         pass
 
     def on_trade(self, trade: TradeData):
-        """
-        Callback of new trade data update.
-        """
+        """成交推送"""
         self.put_event()
 
     def on_stop_order(self, stop_order: StopOrder):
-        """
-        Callback of stop order update.
-        """
+        """停止单推送"""
         pass
 
 
@@ -139,7 +138,7 @@ class DailyBarGenerator(BarGenerator):
         on_window_bar: Callable = None,
         interval: Interval = Interval.MINUTE
     ) -> None:
-        """Constructor"""
+        """生成器"""
         self.bar: BarData = None
         self.on_bar: Callable = on_bar
 
@@ -156,12 +155,11 @@ class DailyBarGenerator(BarGenerator):
         self.last_tick: TickData = None
 
     def update_bar(self, bar: BarData) -> None:
-        """
-        Update new tick data into generator.
-        """
+        """分钟K线推送"""
         self.update_bar_daily_window(bar)
 
     def update_bar_daily_window(self, bar: BarData) -> None:
+        """日线构造"""
         # If not inited, create window bar object
         if not self.daily_bar:
             dt: datetime = bar.datetime.replace(hour=0, minute=0, second=0, microsecond=0)
@@ -181,7 +179,6 @@ class DailyBarGenerator(BarGenerator):
             return
 
         finished_bar: BarData = None
-
 
         # If minute bar of new day, then push existing window bar
         if bar.datetime.day != self.daily_bar.datetime.day:
@@ -221,10 +218,10 @@ class DailyBarGenerator(BarGenerator):
             self.on_daily_bar(finished_bar)
 
     def on_daily_bar(self, bar: BarData) -> None:
-        """"""
-        if self.window == 1:
+        """合成N天K线"""
+        if self.window == 1:  # 一天K线
             self.on_window_bar(bar)
-        else:
+        else:  # 合成self.window天K线
             if not self.window_bar:
                 self.window_bar = BarData(
                     symbol=bar.symbol,
