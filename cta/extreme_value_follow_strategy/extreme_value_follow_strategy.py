@@ -16,8 +16,8 @@ class ExtremeValueFollowStrategy(CtaTemplate):
 
     author = "VeighNa Elite"
 
-    sL = 2         # 数据量偏移参数
-    cL = 15        # 信号截断阈值
+    sL = 9         # 数据量偏移参数
+    cL = 6        # 信号截断阈值
     price_add = 5           # 委托超价
     fixed_size = 1          # 委托数量
     window = 5              # 日内窗口频率的K线，默认为5分钟，可修改
