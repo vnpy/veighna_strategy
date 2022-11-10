@@ -11,7 +11,7 @@ from vnpy_ctastrategy import (
 )
 
 
-class ExtremeValueFollowStrategy(CtaTemplate):
+class ExtremeFollowStrategy(CtaTemplate):
     """极值跟随策略"""
 
     author = "VeighNa Elite"
