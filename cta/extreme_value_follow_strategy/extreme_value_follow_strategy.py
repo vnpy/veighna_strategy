@@ -16,15 +16,15 @@ class ExtremeValueFollowStrategy(CtaTemplate):
 
     author = "VeighNa Elite"
 
-    sL = 9         # 数据量偏移参数
-    cL = 6        # 信号截断阈值
+    extreme_window = 9         # 数据量偏移参数
+    min_count = 6        # 信号截断阈值
     price_add = 5           # 委托超价
     fixed_size = 1          # 委托数量
     window = 5              # 日内窗口频率的K线，默认为5分钟，可修改
 
     parameters = [
-        "sL",
-        "cL",
+        "extreme_window",
+        "min_count",
         "window",
         "price_add",
         "fixed_size"
@@ -42,9 +42,10 @@ class ExtremeValueFollowStrategy(CtaTemplate):
         """构造函数"""
         super().__init__(cta_engine, strategy_name, vt_symbol, setting)
 
-        self.bg = BarGenerator(self.on_bar, self.window, self.on_5min_window_bar)
+        self.bg = BarGenerator(self.on_bar, self.window, self.on_window_bar)
         self.am = ArrayManager()
-        self.old_bar: BarData = None
+
+        self.last_bar: BarData = None
 
     def on_init(self) -> None:
         """初始化"""
@@ -69,47 +70,49 @@ class ExtremeValueFollowStrategy(CtaTemplate):
         """一分钟数据推送"""
         self.bg.update_bar(bar)
 
-    def on_5min_window_bar(self, bar: BarData) -> None:
-        """5分钟K线推送"""
+    def on_window_bar(self, bar: BarData) -> None:
+        """N分钟K线推送"""
         # 更新到ArrayManager
         am: ArrayManager = self.am
         am.update_bar(bar)
         if not am.inited:
             return
 
-        # 先判断新的K线跟以前的是否是同一天的，如果是，就记录count+=1，一直加到cl根K线再开始计算交易信号
-        # 如果是新的一天count设置为1
-        # 新的一天做个初始化
+        # 新的一天做个初始化，count设置为1
+        if not self.last_bar or self.last_bar.datetime.day != bar.datetime.day:
+            self.bar_count = 1
+        # 不是新的一天。那么先检验是否到了计算信号的要求
+        else:
+            # 更新今日K线数量统计
+            self.bar_count += 1
 
-        if not self.old_bar or self.old_bar.datetime.day != bar.datetime.day:
-            self.old_bar = bar
-            self.count = 1
-            return
+            # 当天开盘已经经过了一定数量的K线，满足计算信号的要求
+            if self.bar_count > self.min_count:
+                # 计算时序数组切片索引
+                start: int = -self.bar_count
+                end: int = -self.bar_count + max(self.bar_count - self.extreme_window, 1)
 
-        else:  # 不是新的一天。那么先检验是否到了计算信号的要求
-            if self.count <= self.cL:
-                self.count += 1
-            else:  # 当天开盘已经经过了一定数量的K线，满足计算信号的要求
-                self.count += 1
-                # 这个时候count依然需要增加，因为它记录的是开盘到现在已经经过了多少根K线，下面计算要用到
+                # 计算极大值和极小值
+                high_extreme: float = am.high_array[start:end].max()
+                low_extreme: float = am.low_array[start:end].min()
 
-                vH = am.high_array[-self.count: -self.count + max(self.count - self.sL, 1)].max()  # 计算极大值和极小值
-                vL = am.low_array[-self.count: -self.count + max(self.count - self.sL, 1)].min()
-
-                if bar.close_price > vH:  # 买
+                if bar.close_price > high_extreme:  # 买
                     price: float = bar.close_price + self.price_add
                     if not self.pos:
                         self.buy(price, self.fixed_size)
                     elif self.pos < 0:
                         self.cover(price, abs(self.pos))
                         self.buy(price, self.fixed_size)
-                elif bar.close_price < vL:  # 卖
+                elif bar.close_price < low_extreme:  # 卖
                     price: float = bar.close_price - self.price_add
                     if not self.pos:
                         self.short(price, self.fixed_size)
                     elif self.pos > 0:
                         self.sell(price, abs(self.pos))
                         self.short(price, self.fixed_size)
+
+        # 记录当前K线
+        self.last_bar = bar
 
         self.put_event()
 
