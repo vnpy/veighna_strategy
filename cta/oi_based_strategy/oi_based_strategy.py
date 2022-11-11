@@ -20,8 +20,8 @@ class OiBasedStrategy(CtaTemplate):
 
     author = "VeighNa Elite"
 
-    ma_P_length = 19         # 激进交易的态度窗口长度，研报默认为4
-    ma_Q_length = 17        # 激进交易的分歧度窗口长度，研报默认为5
+    ma_P_length = 16         # 激进交易的态度窗口长度，研报默认为4
+    ma_Q_length = 7        # 激进交易的分歧度窗口长度，研报默认为5
     K = 0.1                # 当天总成交量的比率，研报默认是10%
     price_add = 5           # 委托超价
     fixed_size = 1          # 委托数量
