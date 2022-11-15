@@ -20,16 +20,16 @@ class OiBasedStrategy(CtaTemplate):
 
     author = "VeighNa Elite"
 
-    ma_P_length = 16         # 激进交易的态度窗口长度，研报默认为4
-    ma_Q_length = 7        # 激进交易的分歧度窗口长度，研报默认为5
-    K = 0.1                # 当天总成交量的比率，研报默认是10%
+    ma_p_window = 16        # 激进交易的态度窗口长度，研报默认为4
+    ma_q_window = 7         # 激进交易的分歧度窗口长度，研报默认为5
+    K = 0.1                 # 当天总成交量的比率，研报默认是10%
     price_add = 5           # 委托超价
     fixed_size = 1          # 委托数量
     window = 1              # 日内窗口频率的K线，研报默认为1分钟，可修改
 
     parameters = [
-        "ma_P_length",
-        "ma_Q_length",
+        "ma_p_window",
+        "ma_q_window",
         "K",
         "window",
         "price_add",
@@ -51,8 +51,8 @@ class OiBasedStrategy(CtaTemplate):
         self.bg = BarGenerator(self.on_bar, self.window, self.on_Nmin_window_bar)
         self.am = ArrayManager(500)  # 起码容纳一天以上的分钟数据
         self.last_bar: BarData = None
-        self.P_list: List = [None]*self.ma_P_length
-        self.Q_list: List = [None]*self.ma_Q_length
+        self.P_list: List = [None]*self.ma_p_window
+        self.Q_list: List = [None]*self.ma_q_window
         self.P_count = 0
         self.Q_count = 0
 
@@ -122,7 +122,7 @@ class OiBasedStrategy(CtaTemplate):
             Q = df_Q['Oi_change'][:index+1].sum()
 
             # 此时P和Q都已经算完了，检查P和Q的序列是否到了窗口数量，因为要算MA
-            if self.P_count < self.ma_P_length or self.Q_count < self.ma_Q_length:  # 不够数量
+            if self.P_count < self.ma_p_window or self.Q_count < self.ma_q_window:  # 不够数量
                 self.P_count += 1
                 self.Q_count += 1
                 self.P_list.append(P)
