@@ -15,13 +15,14 @@ from vnpy_ctastrategy import (
 
 
 class CpvStrategy(CtaTemplate):
-    """Cpv策略"""
+    """CPV策略"""
 
     author = "VeighNa Elite"
 
     price_add = 5           # 委托超价
     fixed_size = 1          # 委托数量
-    window = 1              # 日内窗口频率的K线，研报默认为1分钟，可修改
+
+    pv = 0                  # 修正持仓量和收盘价的相关系数
 
     parameters = [
         "window",
@@ -29,7 +30,9 @@ class CpvStrategy(CtaTemplate):
         "fixed_size"
     ]
 
-    variables = []
+    variables = [
+        "pv"
+    ]
 
     def __init__(
         self,
@@ -41,8 +44,9 @@ class CpvStrategy(CtaTemplate):
         """构造函数"""
         super().__init__(cta_engine, strategy_name, vt_symbol, setting)
 
-        self.bg = BarGenerator(self.on_bar, self.window, self.on_Nmin_window_bar)
-        self.am = ArrayManager(500)  # 起码容纳一天以上的分钟数据
+        self.bg = BarGenerator(self.on_bar)
+        self.am = ArrayManager(500)     # 起码容纳一天以上的分钟数据
+
         self.last_bar: BarData = None
 
     def on_init(self) -> None:
@@ -66,46 +70,64 @@ class CpvStrategy(CtaTemplate):
 
     def on_bar(self, bar: BarData) -> None:
         """一分钟数据推送"""
-        self.bg.update_bar(bar)
-
-    def on_Nmin_window_bar(self, bar: BarData) -> None:
-        """N分钟K线推送"""
-        # 更新到ArrayManager
         am: ArrayManager = self.am
         am.update_bar(bar)
         if not am.inited:
             return
 
+        # 新的一天
         if not self.last_bar or self.last_bar.datetime.day != bar.datetime.day:
             self.last_bar = bar
             self.count = 1  # 当天第一根K线
             return
-
+        # 收盘执行计算
         elif bar.datetime.minute == 59 and bar.datetime.hour == 14:
-            # 当前已经收盘，开始计算
             self.count += 1
+
+            # 使用DataFrame作为统计数据容器
             df = pd.DataFrame()
-            df['Vt'] = am.volume_array[-self.count:]  # 成交量
-            if 0 in np.array(df['Vt']):  # 错误数据
+
+            # 读取成交量数据
+            df['vt'] = am.volume_array[-self.count:]
+
+            # 检查异常的成交量数据
+            if 0 in np.array(df['vt']):
                 return
 
-            df['pre_Vt'] = am.volume_array[-self.count - 1: -1]
-            df['Vt_change'] = df['Vt'] - df['pre_Vt']
-            df['Oi'] = am.open_interest_array[-self.count:]  # 持仓量
-            df['pre_Oi'] = am.open_interest_array[-self.count - 1: -1]
-            df['Oi_change'] = df['Oi'] - df['pre_Oi']
-            delta_oi = df['Oi'].iloc[-1] - df['Oi'].iloc[0]  # 当天持仓量变化
-            delta_Vt = df['Vt_change'][1:].sum()  # 当天成交量变化的累积
-            df['oi_t1'] = df['Vt_change'] * delta_oi / delta_Vt  # T+1交易者的贡献
-            df['oi_t0'] = -1 * (df['Oi_change'] - df['oi_t1'])   # T+0交易者的贡献
-            df['mod_delta_oi'] = df['oi_t0'] + df['oi_t1']
-            df['mod_delta_oi'][0] = df['Oi'][0]
-            df['mod_oi'] = df['mod_delta_oi'].cumsum()  # 修正持仓量
-            df['close_price'] = am.close_array[-self.count:]
-            pv = df['close_price'].corr(df['mod_oi'])  # 修正持仓量和收盘价的相关系数
+            # 计算成交量变化
+            df['pre_vt'] = am.volume_array[-self.count-1:-1]
+            df['vt_change'] = df['vt'] - df['pre_vt']
 
-            if pv > 0:
+            # 计算持仓量变化
+            df['oi'] = am.open_interest_array[-self.count:]
+            df['pre_oi'] = am.open_interest_array[-self.count-1:-1]
+            df['oi_change'] = df['oi'] - df['pre_oi']
+
+            # 当天持仓量变化
+            delta_oi = df['oi'].iloc[-1] - df['oi'].iloc[0]
+
+            # 当天成交量变化的累积
+            delta_vt = df['vt_change'][1:].sum()  
+
+            # T+1交易者的贡献
+            df['oi_t1'] = df['vt_change'] * delta_oi / delta_vt
+
+            # T+0交易者的贡献
+            df['oi_t0'] = -1 * (df['oi_change'] - df['oi_t1'])
+
+            # 计算修正持仓量
+            df['mod_delta_oi'] = df['oi_t0'] + df['oi_t1']
+            df['mod_delta_oi'][0] = df['oi'][0]
+            df['mod_oi'] = df['mod_delta_oi'].cumsum()
+
+            # 修正持仓量和收盘价的相关系数
+            df['close_price'] = am.close_array[-self.count:]
+            self.pv = df['close_price'].corr(df['mod_oi'])
+
+            # 执行交易
+            if self.pv > 0:
                 price: float = bar.close_price + self.price_add
+
                 if not self.pos:
                     self.buy(price, self.fixed_size)
                 elif self.pos < 0:
@@ -113,13 +135,14 @@ class CpvStrategy(CtaTemplate):
                     self.buy(price, self.fixed_size)
             else:
                 price: float = bar.close_price - self.price_add
+
                 if not self.pos:
                     self.short(price, self.fixed_size)
                 elif self.pos > 0:
                     self.sell(price, abs(self.pos))
                     self.short(price, self.fixed_size)
-
-        else:  # 不是新的一天，也还没收盘啥也别干，等待记录就好
+        # 其他日内时间等待
+        else:
             self.count += 1
 
         self.put_event()
