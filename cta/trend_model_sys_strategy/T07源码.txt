@@ -1,0 +1,59 @@
+[LegacyColorValue = true]; 
+{ *****************************************************************************************
+本策略由公众号:量化侠   
+收集整理和开发
+如果对于Multicharts不熟悉的客户
+在"捐赠"了本策略之后可以免费加
+量化侠的小编微信：Quant_XW 回复：MC资料
+领取Multicharts从基本软件使用，到编程，
+到实盘实战的全套视频教学资料包多达95G!!!
+*******************************************************************************************}
+
+Input: FastMA(9),SlowMA(26),MacdMA(4), NCOs(4), NBars(50), Trailbar(6);
+Vars: MVal(0), MAvg(0), MDif(0), Counter(0), TotalBars(0), HighestHi(0), LowestLo(0);
+Array: CO[2,50](0);
+
+MVal = MACD(Close,FastMA,SlowMA);
+MAvg = XAverage(MACD(Close,FastMA,SlowMA),MacdMA);
+MDif = MVal - MAvg;
+{ *****************************************************************************************
+核心代码逻辑以及讲解捐赠之后有详细的视频说明，和代码解析
+*******************************************************************************************}
+
+If  MDif Crosses Over  0  OR  MDIF Crosses Under  0 Then Begin
+	For counter = 0 to 49 Begin
+		CO[ 0 , 50 - Counter ] = CO[ 0 , 49 - Counter ];
+		CO[ 1 , 50 - Counter ] = CO[ 1 , 49 - Counter ];
+		CO[ 2 , 50 - Counter ] = CO[ 2 , 49 - Counter ];
+	End;
+	CO[ 0 , 0 ] = BarNumber;
+	CO[ 1, 0 ] = High;
+	CO[ 2, 0 ] = Low; 
+End;
+{ *****************************************************************************************
+策略为量化侠独家开发，
+此代码有股票版本:只做多不做空，需要实盘进行股票自动化交易的客户
+请联系量化侠:Quant_XM，回复：股票
+*******************************************************************************************}
+
+HighestHi = -1;
+LowestLo = 9999999;
+For counter = 0 to NCOs-1 Begin
+	If CO[ 1 , counter ] > HighestHi then
+		HighestHi = CO[ 1 , counter ];
+	If CO[ 2 , counter ] < LowestLo then
+		LowestLo = CO[ 2 , counter ];
+End;
+
+Totalbars = BarNumber - CO[ 0 , NCOs - 1];
+If TotalBars < NBars then Begin
+	Buy Next Bar  at HighestHi + Average(TrueRange,4)*.5 stop; 
+	Sell Short Next Bar  at LowestLo - Average(TrueRange,4)*.5 stop;
+End;
+{ *****************************************************************************************
+策略为量化侠独家开发，
+此代码有股票版本:只做多不做空，需要实盘进行股票自动化交易的客户
+请联系量化侠:Quant_XM，回复：股票
+*******************************************************************************************}
+Sell next bar at Lowest( Low , TrailBar ) Stop;
+Buy to Cover next bar at Highest( High , TrailBar ) Stop;
