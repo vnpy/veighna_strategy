@@ -1,5 +1,7 @@
 from numpy import ndarray
 
+from vnpy.trader.constant import Interval
+
 from vnpy_ctastrategy import (
     CtaTemplate,
     CtaEngine,
@@ -24,6 +26,10 @@ class RumiStrategy(CtaTemplate):
     price_add = 5           # 委托超价
     fixed_size = 1          # 委托数量
 
+    atr_window = 10
+    trading_size = 1
+    risk_level = 5000
+
     ma_diff = 0.0           # 均线偏差值
 
     parameters = [
@@ -45,8 +51,14 @@ class RumiStrategy(CtaTemplate):
         """构造函数"""
         super().__init__(cta_engine, strategy_name, vt_symbol, setting)
 
-        self.bg = BarGenerator(self.on_bar)
-        self.am = ArrayManager()
+        self.bg = BarGenerator(
+            self.on_bar,
+            window=30,
+            on_window_bar=self.on_window_bar,
+            # interval=Interval.HOUR
+        )
+
+        self.am = ArrayManager(200)
 
     def on_init(self) -> None:
         """初始化"""
@@ -69,6 +81,12 @@ class RumiStrategy(CtaTemplate):
 
     def on_bar(self, bar: BarData) -> None:
         """K线推送"""
+        self.bg.update_bar(bar)
+
+    def on_window_bar(self, bar: BarData) -> None:
+        """周期K线推送"""
+        self.cancel_all()
+
         # 更新到ArrayManager
         am: ArrayManager = self.am
         am.update_bar(bar)
@@ -77,7 +95,7 @@ class RumiStrategy(CtaTemplate):
 
         # 计算均线数组
         fast_array: ndarray = am.sma(self.fast_window, array=True)
-        slow_array: ndarray = am.ema(self.slow_window, array=True)
+        slow_array: ndarray = am.wma(self.slow_window, array=True)
 
         # 计算均线差值
         diff_array: ndarray = fast_array - slow_array
@@ -88,6 +106,10 @@ class RumiStrategy(CtaTemplate):
         cross_over = diff_mean_0 > 0 and diff_mean_1 <= 0
         cross_below = diff_mean_0 < 0 and diff_mean_1 >= 0
 
+        # 计算交易数量
+        self.atr_value = am.atr(self.atr_window)
+        self.fixed_size = max(int(self.risk_level / self.atr_value), 1)
+        # print(self.fixed_size)
         # 执行交易信号
         if cross_over:
             # 计算委托限价（超价）
